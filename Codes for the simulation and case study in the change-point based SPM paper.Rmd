@@ -1,0 +1,485 @@
+---
+title: "1.6 HDtest"
+author: "wzz"
+date: "3/9/2020"
+output: html_document
+---
+
+```{r install.packages, include=FALSE， echo=FALSE}
+
+install.packages('MASS')
+install.packages('dplyr')
+install.packages("openxlsx")
+install.packages("tidyr")
+install.packages('ggplot2')
+install.packages('imputeTS')
+install.packages('expm')
+install.packages('pracma')
+install.packages('LearnBayes')
+install.packages('knitr')
+```
+
+
+```{r, include=FALSE， echo=FALSE }
+
+library(MASS)
+library(dplyr)
+library(openxlsx) 
+library(tidyr)
+library(ggplot2)
+library(imputeTS)
+library(expm)
+library(pracma)
+library(LearnBayes)
+library(knitr)
+```
+
+
+
+```{r all functions}
+#Part 1. Function for simulation 
+#Part 1.1 Data generation 
+#Function 1.1 Generate multivariate normal distribution data with identity matrix. 
+MN_sample <- function(p, n, delta, r){
+  mu = rep(0, p)
+  Sigma = diag(p)
+  if(r==0){
+    mu1=mu
+  }else{
+    pshift = p*r
+    lshift = c(1:pshift)
+    mu1 = replace(mu, lshift, rep((delta*diag(Sigma)), length.out=length(lshift)))
+  }
+  Shiftsample = mvrnorm(n, mu1, Sigma, tol = 1e-6, empirical = FALSE, EISPACK = FALSE)
+  Shiftsample = t(Shiftsample)
+  return(Shiftsample)
+}
+#Function 1.2 Generte multivariate normal data with heteroscedasticity. 
+hete_sample <- function(p, n, delta, r){
+  mu = rep(0, p)
+  pshift = p*r
+  lshift = c(1:pshift)
+  Sigma = diag(p)
+  if(r==0){
+    mu1=mu
+  }else{
+    pshift = p*r
+    lshift = c(1:pshift)
+    mu1 = replace(mu, lshift, rep((delta*diag(Sigma)), length.out=length(lshift)))
+  }
+  size <- rep_len(c(seq(0.5, 1, 0.1), rev(seq(0.5, 1, 0.1))), n)
+  Limatrix <- lapply(size, function(x){result <-x*Sigma; return(result)})
+  sample <- matrix(NA, p, n)
+  for(i in 1:n){
+    sample[,i] <- mvrnorm(1, mu1, Limatrix[[i]])
+  }
+  return(sample)
+}
+#Function 1.3 Generate multivariate normal data with dependency. 
+cor_sample <- function(p, n, delta, r){
+  mu = rep(0, p)
+  Sigma = diag(p)
+  if(r==0){
+    mu1=mu
+  }else{
+    pshift = p*r
+    lshift = c(1:pshift)
+    mu1 = replace(mu, lshift, rep((delta*diag(Sigma)), length.out=length(lshift)))
+  }
+  index <- t(combn(c(1:p), 2))
+  for(i in 1:nrow(index)){
+    Sigma[index[i,1], index[i,2]] <- 0.995^abs(index[i,1]- index[i,2])
+    Sigma[index[i,2], index[i,1]] <- 0.995^abs(index[i,1]- index[i,2])
+  }
+  Shiftsample = mvrnorm(n, mu1, Sigma, tol = 1e-6, empirical = FALSE, EISPACK = FALSE)
+  Shiftsample = t(Shiftsample)
+  return(Shiftsample)
+}
+#Function 4. Generate data from t distribution 
+t_sample <- function(p, n, delta, r){
+  mu = rep(0, p)
+  Sigma = diag(p)
+  if(r==0){
+    mu1=mu
+  }else{
+    pshift = p*r
+    lshift = c(1:pshift)
+    mu1 = replace(mu, lshift, rep((delta*diag(Sigma)), length.out=length(lshift)))
+  }
+  index <- t(combn(c(1:p), 2))
+  for(i in 1:nrow(index)){
+    Sigma[index[i,1], index[i,2]] <- 0.995^abs(index[i,1]- index[i,2])
+    Sigma[index[i,2], index[i,1]] <- 0.995^abs(index[i,1]- index[i,2])
+    }
+  tsample <- t(rmt(n, mu1, Sigma, 30))
+  return(tsample)
+}
+###########################################################################
+#Part 1.2 Function for the proposed NS and SS method.
+#Function 5. Calculate the proposed monitoring statistics. 
+ChangChangepoint <- function(Sample){
+  dim = dim(Sample)
+  n = dim[2]
+  p = dim[1]
+  Tns = rep(0, n-1)                     
+  Ts = rep(0, n-1)                   
+  for (k in 3:(n-3)){
+    sample1 = Sample[, 1:k]
+    sample2 = Sample[, (k+1):n]
+    mean1 = rowMeans(sample1)
+    mean2 = rowMeans(sample2)
+    sigma1 = apply(sample1, 1, var)
+    sigma2 = apply(sample2, 1, var)
+    Tns[k] = max(sqrt(k*(n-k)/n)*abs(mean1-mean2))
+    Ts[k] = max(sqrt(k*(n-k))*abs(mean1-mean2)/sqrt(k*sigma1+(n-k)*sigma2))
+    }
+  Uns = max(Tns)
+  Kns = which.max(Tns)
+  Us = max(Ts)
+  Ks = which.max(Ts)
+  return(c(Uns, Kns, Us, Ks))
+  }
+#Function 6. Simulate the control limits by false alarm probability 
+Changthreshold <- function(Sample, simulation, W, alpha){
+  dim <- dim(Sample)
+  Sresult <- matrix(0, nrow = simulation, ncol = 4)
+  colnames(Sresult) <- c('Uns', 'Kns', 'Us', 'Ks')
+  for (i in 1:simulation){
+    randvec <- sample(1:dim[2], W, replace = TRUE)
+    subset <- Sample[, randvec]
+    result <- ChangChangepoint(subset)
+    Sresult[i, 1:length(result)] <- result
+    }
+  NSthreshold <- quantile(Sresult[ ,1], (1-alpha), na.rm = TRUE)
+  Sthreshold <- quantile(Sresult[ ,3], (1-alpha), na.rm = TRUE)
+  return(c(NSthreshold, Sthreshold))
+  }
+############################################################################################
+#Part 1.3 Function to test the performance(DR, CED, CPE) of the proposed methods.
+#Function 7. Performance Simulation of Model I.
+Nperformance <- function(p, W, tau, delta, r, simulation, CNSCL, CSSCL){
+  ChangresultNS <- matrix(0, simulation, 3)
+  colnames(ChangresultNS) <- c("RL", "statistics", "change point")
+  ChangresultSS <- ChangresultNS
+  step <- seq(W, 100, 5)
+  for(s in 1:simulation){
+  s1 <- MN_sample(p, tau, 0, 0)
+  s2 <- MN_sample(p, (100-tau), delta, r)
+  Sample <- cbind(s1, s2)#
+  signal1 <- 0
+  signal2 <- 0
+  for(i in step){
+    Changstat <- ChangChangepoint(Sample[, (i-W+1):i])
+    if(signal1==0 && Changstat[1] > CNSCL){
+      Changstat[2] <- i+Changstat[2]-W
+      ChangresultNS[s,] <- c(i, Changstat[1:2])
+      signal1 <- signal1+1
+      } 
+    if(signal2==0 && Changstat[3] > CSSCL){
+      Changstat[4] <- i+Changstat[4]-W
+      ChangresultSS[s, ] <- c(i, Changstat[3:4])
+      signal2 <- signal2+1
+      }
+    if(signal1*signal2 != 0){  
+      break
+      }
+    }
+  }
+  return(list(ChangresultNS, ChangresultSS))
+}
+#Function 8. Performance simulation of Model II.
+Hperformance <- function(p, W, tau, delta, r, simulation, CNSCL, CSSCL){ 
+  ChangresultNS <- matrix(0, simulation, 3)
+  colnames(ChangresultNS) <- c("RL", "statistics", "change point")
+  ChangresultSS <- ChangresultNS
+  step <- seq(W, 100, 5)
+  for(s in 1:simulation){
+  s1 <- MN_sample(p, tau, 0, 0)
+  s2 <- hete_sample(p, (100-tau), delta, r)
+  Sample <- cbind(s1, s2)#
+  signal1 <- 0
+  signal2 <- 0
+  for(i in step){
+    Changstat <- ChangChangepoint(Sample[, (i-W+1):i])
+    if(signal1==0 && Changstat[1] > CNSCL){
+      Changstat[2] <- i+Changstat[2]-W
+      ChangresultNS[s,] <- c(i, Changstat[1:2])
+      signal1 <- signal1+1
+      } 
+    if(signal2==0 && Changstat[3] > CSSCL){
+      Changstat[4] <- i+Changstat[4]-W
+      ChangresultSS[s, ] <- c(i, Changstat[3:4])
+      signal2 <- signal2+1
+      }
+    if(signal1*signal2 != 0){   
+      break
+      }
+    }
+  }
+  return(list(ChangresultNS, ChangresultSS)) 
+}
+#Function 9. Performance simulation of Model III.
+Cperformance <- function(p, W, tau, delta, r, simulation, CNSCL, CSSCL){
+  ChangresultNS <- matrix(0, simulation, 3)
+  colnames(ChangresultNS) <- c("RL", "statistics", "change point")
+  ChangresultSS <- ChangresultNS
+  step <- seq(W, 100, 5)
+  for(s in 1:simulation){
+  s1 <- MN_sample(p, tau, 0, 0)
+  s2 <- cor_sample(p, (100-tau), delta, r)
+  Sample <- cbind(s1, s2)#
+  signal1 <- 0
+  signal2 <- 0
+  for(i in step){
+    Changstat <- ChangChangepoint(Sample[, (i-W+1):i])
+    if(signal1==0 && Changstat[1] > CNSCL){
+      Changstat[2] <- i+Changstat[2]-W
+      ChangresultNS[s,] <- c(i, Changstat[1:2])
+      signal1 <- signal1+1
+      } 
+    if(signal2==0 && Changstat[3] > CSSCL){
+      Changstat[4] <- i+Changstat[4]-W
+      ChangresultSS[s, ] <- c(i, Changstat[3:4])
+      signal2 <- signal2+1
+      }
+    if(signal1*signal2 != 0){  
+      break
+      }
+    }
+  }
+  return(list(ChangresultNS, ChangresultSS)) 
+}
+#Function 10. Performance simulation of Model IV.
+Tperformance <- function(p, W, tau, delta, r, simulation, CNSCL, CSSCL){
+  ChangresultNS <- matrix(0, simulation, 3)
+  colnames(ChangresultNS) <- c("RL", "statistics", "change point")
+  ChangresultSS <- ChangresultNS
+  step <- seq(W, 100, 5)
+ for(s in 1:simulation){
+  s1 <- MN_sample(p, tau, 0, 0)
+  s2 <- t_sample(p, (100-tau), delta, r)
+  Sample <- cbind(s1, s2)
+  signal1 <- 0
+  signal2 <- 0
+  for(i in step){
+    Changstat <- ChangChangepoint(Sample[, (i-W+1):i])
+    if(signal1==0 && Changstat[1] > CNSCL){
+      Changstat[2] <- i+Changstat[2]-W
+      ChangresultNS[s,] <- c(i, Changstat[1:2])
+      signal1 <- signal1+1
+      } 
+    if(signal2==0 && Changstat[3] > CSSCL){
+      Changstat[4] <- i+Changstat[4]-W
+      ChangresultSS[s, ] <- c(i, Changstat[3:4])
+      signal2 <- signal2+1
+      }
+    if(signal1*signal2 != 0){   
+      break
+      }
+    }
+  }
+  return(list(ChangresultNS, ChangresultSS)) 
+}
+#Function 11. Calculate the simulated DR, CED, CPE.
+metric <- function(R){
+  NS <- R[[1]]
+  SS <- R[[2]]
+  NSs <- subset(NS, NS[,1]!=0)
+  SSs <- subset(SS, SS[,1]!=0)
+  NSDR <- nrow(NSs)/simulation
+  SSDR <- nrow(SSs)/simulation
+  NSRLCP <- apply(NSs, 2, mean)
+  SSRLCP <- apply(SSs, 2, mean)
+  return(c( NSDR, NSRLCP[c(1,3)], SSDR, SSRLCP[c(1,3)])) #LIDR,, LIRLCP
+}
+##############################################################################################
+#Part 1.4 Function for signal diagnosis, in particularly, the detection rate of variables. 
+#Function 12. DRv of monitoring one process
+D_Chang <- function(Sample, CNSCL, CSSCL, Va){
+  dim = dim(Sample)
+  n = dim[2]
+  p = dim[1]
+  Tns = matrix(0, nrow = p, ncol = n)                     
+  Ts = matrix(0, nrow = p, ncol = n)                    
+  for (k in 3:(n-3)){
+    sample1 = Sample[, 1:k]
+    sample2 = Sample[, (k+1):n]
+    mean1 = rowMeans(sample1)
+    mean2 = rowMeans(sample2)
+    sigma1 = apply(sample1, 1, var)
+    sigma2 = apply(sample2, 1, var)
+    Tns[, k] = sqrt(k*(n-k)/n)*abs(mean1-mean2)
+    Ts[, k] = sqrt(k*(n-k))*abs(mean1-mean2)/sqrt(k*sigma1+(n-k)*sigma2)
+    }
+  if(max(Tns) < CNSCL){
+    rate_ns = NA
+    }else{
+    index1 <- which(Tns == max(Tns), arr.ind = TRUE)
+    Vns <- which(Tns[,index1[2]] > CNSCL)
+    rate_ns <- length(which(Vns <= Va))/(Va)
+    }
+  if(max(Ts) < CSSCL){
+    rate_s = NA
+    }else{
+    index2 <- which(Ts == max(Ts), arr.ind = TRUE)
+    Vss <- which(Ts[,index2[2]] > CSSCL)
+    rate_s <- length(which(Vss <= Va))/(Va)
+    }
+  return(c(rate_ns, rate_s)) #
+  }
+#Function 13. Simulated DRv
+Dig_varia <- function(p, W, tau, delta, r, simulation, CNSCL, CSSCL){ 
+  ChangresultNS <- rep(NA, simulation)
+  ChangresultSS <- ChangresultNS
+  step <- seq(W, 100, 5)
+  for(s in 1:simulation){
+  s1 <- MN_sample(p, tau, 0, 0)
+  s2 <- MN_sample(p, (100-tau), delta, r)
+  Sample <- cbind(s1, s2)
+  signal1 <- 0
+  signal2 <- 0
+  Va <- p*r
+  for(i in step){
+    D_variable <- D_Chang(Sample[, (i-W+1):i], CNSCL, CSSCL, Va)
+    if(signal1==0){
+      ChangresultNS[s] <-D_variable[1]
+      signal1 <- signal1+1
+      } 
+    if(signal2==0){
+      ChangresultSS[s] <-D_variable[2]
+      signal2 <- signal2+1
+      }
+    if(signal1*signal2 != 0){   
+       break
+      }
+    }
+  }
+  return(c(mean(ChangresultNS, na.rm=TRUE), mean(ChangresultSS, na.rm=TRUE))) 
+}
+
+######################################################################################
+#Part 2. Case study
+#Function 14. Performance of the proposed methods with real data
+case_performance <- function(W, tau, simulation, testCL){
+  resultNS <- matrix(0, simulation, 3)
+  colnames(resultNS) <- c("RL", "statistics", "change point")
+  resultSS <- resultNS
+  for(s in 1:simulation){
+    s1 <- S_IC[sample(nrow(S_IC), tau, replace = TRUE),]
+    s2 <- S_OC[sample(nrow(S_OC), (100-tau), replace = TRUE),]
+    Sample <- cbind(t(s1), t(s2))#
+    signal1 <- 0
+    signal2 <- 0
+    for(i in step){
+      stat <- ChangChangepoint(Sample[, (i-W+1):i])
+      if(signal1==0 && stat[1] > testCL[1]){
+        stat[2] <- i+stat[2]-W
+        resultNS[s,] <- c(i, stat[1:2])
+        signal1 <- signal1+1
+        } 
+      if(signal2==0 && stat[3] > testCL[2] && stat[3]!="NaN"){
+        stat[4] <- i+stat[4]-W
+        resultSS[s, ] <- c(i, stat[3:4])
+        signal2 <- signal2+1
+        }
+      if(signal1*signal2 != 0){ 
+        break
+        }
+      }
+    }
+  NSs <- subset(resultNS, resultNS[,1]!=0)
+  SSs <- subset(resultSS, resultSS[,1]!=0)
+  NSDR <- nrow(NSs)/simulation
+  SSDR <- nrow(SSs)/simulation
+  NSRLCP <- colMeans(NSs, na.rm = TRUE)[c(1,3)]
+  SSRLCP <- colMeans(SSs, na.rm = TRUE)[c(1,3)]
+  return(c(NSDR, NSRLCP, SSDR, SSRLCP))
+  }
+```
+
+```{r example of simulation }
+tau = 10 #Location of the change point
+simulation = 100 #Number of simulations runs
+delta = 2 #Shift size
+r = 0.25 #Sparsity level
+p = 20 #Dimensionality
+W = 20 #Window size
+CNSCL = 4.584 #Control limit for the non-studentized statistic
+CSSCL = 6.779 #Control limit for the studentized statistic
+DR_CED_CPE <- metric(Nperformance(p, W, tau, delta, r, simulation, CNSCL, CSSCL)) #Simulation to get the DR, CED and CPE
+DR_v <- Dig_varia(p, W, tau, delta, r, simulation, CNSCL, CSSCL) #Simulation to get the DRv.
+```
+```{r case study with semiconductor data}
+#1. Import data
+secom <- read.xlsx("secom.xlsx", sheet = 1, startRow = 1, colNames = FALSE, rowNames = FALSE, detectDates = FALSE, skipEmptyRows = FALSE, skipEmptyCols = FALSE, na.strings = "NA")
+
+#2. Prepare the data. 
+OCsecom <- as.matrix(filter(secom[,-1], secom[,1]==1))
+ICsecom <- as.matrix(filter(secom[,-1], secom[,1]==-1))
+IC1 <- ICsecom
+
+#3. Replace outliers and missing value by median.
+k=1.5
+ICquantile <-apply(IC1, 2, quantile, na.rm=TRUE)
+Lrange <- ICquantile[2,]-k*(ICquantile[4,]- ICquantile[2,])
+Urange <- ICquantile[4,]+k*(ICquantile[4,]- ICquantile[2,])
+for(i in 1:ncol(IC1)){
+ IC1[which(IC1[,i] < Lrange[i] | IC1[,i] > Urange[i]), i] <- NA
+ IC1[is.na(IC1[,i]), i] <- median(IC1[,i], na.rm = TRUE)
+}
+
+#4. Standardize the data
+ICmean <- colMeans(IC1)
+ICstd <- apply(IC1, 2, std)
+r1 <- sweep(IC1, 2, ICmean, `-`)
+S_IC <- sweep(r1, 2, ICstd, `/`) #This df is for monitoring 
+
+OC1 <- OCsecom
+for(i in 1:ncol(OC1)){
+ OC1[is.na(OC1[,i]), i] <- median(OC1[,i], na.rm = TRUE)
+}
+r2 <- sweep(OC1, 2, ICmean, `-`)
+S_OC <- sweep(r2, 2, ICstd, `/`) #This df is for monitoring
+
+#5. Performance of the proposed methods for monitoring semiconductor data --An Example
+simulation = 100 #Number of simulation runs
+W=20 #Window size
+s=5 #Step size
+step <- seq(W, 100, s) #Set the step size
+testCL <- Changthreshold(t(S_IC), 10000, W, (1-(1-0.01)^(1/length(step)))) #Data-driven control limits for the semiconductor data
+tau = 10
+result <- case_performance(W, tau, simulation, testCL)
+```
+
+```{r Figures in the paper }
+#Figure 1. Autocorrelation with different step szie
+simul = 100
+W=30
+plotdata <- matrix(NA, nrow=100, ncol=5)
+for(s in  c(1, 3, 5)){
+  step = seq(W, 100, s)
+  Acf <- matrix(NA, nrow = min(c(length(step), W+1)), ncol = simul)
+  for(j in 1:simul){
+    sample <- MN_sample(50, 100, 0, 0)
+    Changstat <- matrix(NA, nrow = 100, ncol = 4)
+    for(i in step){
+      Changstat[i, ] <- ChangChangepoint(sample[, (i-W+1):i])
+      }
+    Changstat <- na.omit(Changstat)
+    Acf[,j] <- acf(Changstat[,1], lag = min(c(length(step), W)), plot=FALSE)$acf
+  }
+  plotdata[1:min(c(length(step), W+1)),s] <-  rowMeans(Acf)
+  }
+
+barplot(t(plotdata[2:21, c(1, 3, 5)]), beside=TRUE, ylim = c(-0.1, 0.5), xlab="Lag", ylab = "Autocorrelation", density=c(30,30,30), angle=c(10,30,120),legend = c("s=1", "s=3", "s=5"))
+
+#Figure 2. Heteroscedasticity of the standardized scores of semiconductor data
+par(mfrow=c(2,2))
+plot(S_IC[1:500,6], type="l", ylab = "X6", xlab = "(a)")
+plot(S_IC[1:500,167], type="l", ylab = "X167", xlab = "(b)")
+plot(S_IC[500:1000,213], type="l", ylab =  "X213", xlab = "(c)", xaxt = "n")
+axis(1, at=seq(0, 500, 100), labels=seq(500, 1000, 100))
+plot(S_IC[500:1000,338], type="l", ylab = "X338", xlab = "(d)",xaxt = "n")
+axis(1, at=seq(0, 500, 100), labels=seq(500, 1000, 100))
+```
+
