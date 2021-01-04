@@ -1,6 +1,5 @@
 ##Code for simulation and case study in the "A Change-Point Based Control Chart for Detecting Sparse Changes in High-Dimensional Data"
-```{r}
-##---------------------------------------------------------------------------------------------
+##--------------------------------------------------------------------------------------------------------------
 ##Install and library the packages
 install.packages('MASS')
 install.packages('dplyr')
@@ -10,11 +9,9 @@ library(MASS)
 library(openxlsx)
 library(dplyr)
 
-```
-
-```{r all functions}
+##-----------------------------------------------------------------------------------------------------------------
 ##Part 1. Function for simulation 
-#Part 1.1 Data generation 
+##Part 1.1 Data generation 
 #Function 1.1 Generate multivariate normal distribution data with identity matrix. 
 MN_sample <- function(p, n, delta, r){
   mu = rep(0, p)
@@ -90,8 +87,9 @@ t_sample <- function(p, n, delta, r){
   tsample <- t(rmt(n, mu1, Sigma, 30))
   return(tsample)
 }
-###########################################################################
-#Part 1.2 Function for the proposed NS and SS method.
+
+##-------------------------------------------------------------------------------------------------------------------
+##Part 1.2 Function for the proposed NS and SS method.
 #Function 5. Calculate the proposed monitoring statistics. 
 ChangChangepoint <- function(Sample){
   dim = dim(Sample)
@@ -130,8 +128,9 @@ Changthreshold <- function(Sample, simulation, W, alpha){
   Sthreshold <- quantile(Sresult[ ,3], (1-alpha), na.rm = TRUE)
   return(c(NSthreshold, Sthreshold))
   }
-############################################################################################
-#Part 1.3 Function to test the performance(DR, CED, CPE) of the proposed methods.
+  
+##---------------------------------------------------------------------------------------------------------
+##Part 1.3 Function to test the performance(DR, CED, CPE) of the proposed methods.
 #Function 7. Performance Simulation of Model I.
 Nperformance <- function(p, W, tau, delta, r, simulation, CNSCL, CSSCL){
   ChangresultNS <- matrix(0, simulation, 3)
@@ -268,8 +267,9 @@ metric <- function(R){
   SSRLCP <- apply(SSs, 2, mean)
   return(c( NSDR, NSRLCP[c(1,3)], SSDR, SSRLCP[c(1,3)])) #LIDR,, LIRLCP
 }
-##############################################################################################
-#Part 1.4 Function for signal diagnosis, in particularly, the detection rate of variables. 
+
+##----------------------------------------------------------------------------------------------------------------
+##Part 1.4 Function for signal diagnosis, in particularly, the detection rate of variables. 
 #Function 12. DRv of monitoring one process
 D_Chang <- function(Sample, CNSCL, CSSCL, Va){
   dim = dim(Sample)
@@ -333,8 +333,8 @@ Dig_varia <- function(p, W, tau, delta, r, simulation, CNSCL, CSSCL){
   return(c(mean(ChangresultNS, na.rm=TRUE), mean(ChangresultSS, na.rm=TRUE))) 
 }
 
-######################################################################################
-#Part 2. Case study
+##----------------------------------------------------------------------------------------------------------------------------
+##Part 2. Function for case study
 #Function 14. Performance of the proposed methods with real data
 case_performance <- function(W, tau, simulation, testCL){
   resultNS <- matrix(0, simulation, 3)
@@ -371,9 +371,9 @@ case_performance <- function(W, tau, simulation, testCL){
   SSRLCP <- colMeans(SSs, na.rm = TRUE)[c(1,3)]
   return(c(NSDR, NSRLCP, SSDR, SSRLCP))
   }
-```
-
-```{r example of simulation }
+  
+##------------------------------------------------------------------------------------------
+##Part 3. Example of applying simulation functions.
 tau = 10 #Location of the change point
 simulation = 100 #Number of simulations runs
 delta = 2 #Shift size
@@ -384,9 +384,9 @@ CNSCL = 4.584 #Control limit for the non-studentized statistic
 CSSCL = 6.779 #Control limit for the studentized statistic
 DR_CED_CPE <- metric(Nperformance(p, W, tau, delta, r, simulation, CNSCL, CSSCL)) #Simulation to get the DR, CED and CPE
 DR_v <- Dig_varia(p, W, tau, delta, r, simulation, CNSCL, CSSCL) #Simulation to get the DRv.
-```
 
-```{r case study with semiconductor data}
+##----------------------------------------------------------------------------------------------------------------------------
+##Part 4. Case study
 #1. Import data
 secom <- read.xlsx("secom.xlsx", sheet = 1, startRow = 1, colNames = FALSE, rowNames = FALSE, detectDates = FALSE, skipEmptyRows = FALSE, skipEmptyCols = FALSE, na.strings = "NA")
 
@@ -426,9 +426,9 @@ step <- seq(W, 100, s) #Set the step size
 testCL <- Changthreshold(t(S_IC), simulation, W, (1-(1-0.01)^(1/length(step)))) #Data-driven control limits for the semiconductor data
 tau = 10
 result <- case_performance(W, tau, simulation, testCL)
-```
 
-```{r Figures in the paper }
+##-----------------------------------------------------------------------------------------------------------------------------------------
+##Part 5. Figures in the paper
 #Figure 1. Autocorrelation with different step szie
 simul = 100
 W=30
@@ -457,5 +457,4 @@ plot(S_IC[500:1000,213], type="l", ylab =  "X213", xlab = "(c)", xaxt = "n")
 axis(1, at=seq(0, 500, 100), labels=seq(500, 1000, 100))
 plot(S_IC[500:1000,338], type="l", ylab = "X338", xlab = "(d)",xaxt = "n")
 axis(1, at=seq(0, 500, 100), labels=seq(500, 1000, 100))
-```
 
